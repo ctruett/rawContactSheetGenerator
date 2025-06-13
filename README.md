@@ -1,43 +1,75 @@
-rawContactSheetGenerator
-========================
+# Raw Contact Sheet Generator
 
-Raw contact Sheet Generator, uses DCRaw,Exifv2 and PIL to create thumbnails of raw files, lighting fast, with custom fields like good old times transparencies.
+A Python tool for creating professional contact sheets from RAW images and standard image formats. Displays EXIF metadata, supports batch processing, and offers customizable output options.
 
-Intro:
-------
-After upgrading from the 400D to the 7d and subsequently to the 5d Mark II and later to a Phase One P+ digital back, I noticed a huge performance hit on developing the raw files, no matter what software i would use.
-Its understandable as the 18mp from 7d are 25mb, 21mp raw files from the 5d are almost 30 Mb, and the Phase One P+ images can go up to 200mb depending on the DB.
-After the first long field trip bringing home around 100Gb of raw material, I had to figure a way to quickly export jpg thumbnails to be able to review them, as my laptop took more than 9 sec for each raw file to show up in full res with DPP, about the same with C1, Bible, and DxO. On top of that i also wanted information from the exif to be printed on the picture for quick review of the settings. Its easier to pick one shot from several of the same subject when you know which ones will have more depth of field, be less noisy, and have less hand held blur.
-After going through numerous softwares trying to get exactly what I wanted, I got really frustrated.
-DCRaw came into play here (opensource!!), huge perfomance difference, even more with www.heliconsoft.com modification to make dcraw multithread!.
-The code quickly built up to have a few more options than expected, as to be able to pick exactly which info to print in the picture, where to print it, a histogram overlay, custom text (for ie: the place where they where taken, see the sample images), and an extra panel for even showing more info as the lens used, focal length, focal distance, photographer (from camera settings), all read from the picture itself of course.
-It can go through 100 21megapixels Phase one raw photos within a directory, in less than 10 minutes, highly customizable to even look like a Mamiya AFD AFDII AFDIII or Phaso One AF film strip info, and this is the result.
+## Features
 
-Screenshots folder for some examples made from 5dmarkII, and Phase Ones P25+ files.
-This examples show different settings to make the thumbnails with histograms, custom fields pulled from the exif information and each field layout options
-![My image](examples//example_01.jpg)
-![My image](examples//example_02.jpg)
-![My image](examples//example_03.jpg)
+- **Wide Format Support**: Process RAW files (CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2, PEF, SRW) and standard formats (JPEG, TIFF, PPM)
+- **EXIF Display**: Shows camera model, ISO, shutter speed, aperture, and filename
+- **Batch Processing**: Process entire directories of images
+- **Auto-Rotation**: Automatically rotates portrait images to landscape
+- **Image Enhancement**: Optional sharpening and auto-contrast
+- **Histogram Overlay**: Display RGB histogram on contact sheets
+- **Optimized Layout**: Compact margins with well-positioned metadata text
 
+## Requirements
 
-Requirements and installation:
-* Python 2.6 (or above)
-* PIL-1.1.7 with libjpeg lib
-* DCRaw exe(unzip it to the same folder, original or the helicons multithreaded version)
-* exiv2 exe (drop it to the same folder too)
+- Python 3.6+
+- PIL/Pillow
+- pyexiv2
+- dcraw (for RAW processing)
 
-For PIL with jpeg decoder get the precompiled instalable binaries from:
+## Installation
 
-http://www.lfd.uci.edu/~gohlke/pythonlibs/
+1. Clone the repository:
+```bash
+git clone git@github.com:ctruett/rawContactSheetGenerator.git
+cd rawContactSheetGenerator
+```
 
-Or if you are hardcore, go this way:
+2. Install Python dependencies:
+```bash
+pip install Pillow pyexiv2
+```
 
-http://effbot.org/zone/pil-decoder-jpeg-not-available.htm
+3. Install dcraw:
+   - macOS: `brew install dcraw`
+   - Linux: `sudo apt-get install dcraw`
+   - Windows: Download dcraw.exe and place in project directory
 
-for DCRaw cmd go to this website
+## Usage
 
-http://www.rawness.es/category/descargas/catalogo-de-binarios-de-dcraw/?lang=en
+Basic usage:
+```bash
+python contactSheetGenerator_modern_cli.py /path/to/images
+```
 
-for Exiv2 go to this website
+With options:
+```bash
+# Set output width to 800px with 90% JPEG quality
+python contactSheetGenerator_modern_cli.py -w 800 -q 90 /path/to/images
 
-http://www.exiv2.org/download.html
+# Enable histogram overlay
+python contactSheetGenerator_modern_cli.py --histogram /path/to/images
+
+# Disable sharpening
+python contactSheetGenerator_modern_cli.py --no-sharpen /path/to/images
+```
+
+## Command Line Options
+
+- `-w, --width`: Contact sheet width in pixels (default: 600)
+- `-q, --quality`: JPEG output quality 1-100 (default: 95)
+- `--histogram`: Enable RGB histogram overlay
+- `--no-exif`: Disable EXIF information display
+- `--no-sharpen`: Disable automatic sharpening
+- `--custom-text`: Enable custom text overlay
+
+## Output
+
+Contact sheets are saved in the source directory with "_contactSheet" suffix:
+- `IMG_1234.CR2` → `IMG_1234_contactSheet.jpg`
+
+## License
+
+MIT License - see LICENSE file for details

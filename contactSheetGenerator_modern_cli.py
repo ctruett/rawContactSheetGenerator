@@ -132,6 +132,7 @@ class ContactSheetGenerator(object):
         self.actualBottomMargin = 0  # Store actual bottom margin used
         self.frameCounter = 0  # Frame counter for folder processing
         self.isProcessingFolder = False  # Track if processing a folder
+        self.htmlImages = []  # Store image info for HTML generation
 
         if directory_in:
             self.getImagesFromDirectory(directory_in)
@@ -145,7 +146,7 @@ class ContactSheetGenerator(object):
 
         for fileName in self.fileList:
             t0 = time.time()
-            if self.isProcessingFolder:
+            if self.isProcessingFolder or self.contactSheetConfiguration.get('renameFrames', False):
                 self.frameCounter += 1
             print(f"Processing: {os.path.basename(fileName)}")
             self.extractShootingInformation(fileName)
@@ -159,27 +160,362 @@ class ContactSheetGenerator(object):
             t1 = time.time()
             print(f"{fileName} done in {t1-t0:.2f} seconds")
 
+        # Generate HTML contact sheet if requested
+        if self.contactSheetConfiguration.get('generateHTML', False):
+            print(f"HTML generation enabled, calling generateHTMLContactSheet()")
+            self.generateHTMLContactSheet()
+        else:
+            print(f"HTML generation disabled (generateHTML: {self.contactSheetConfiguration.get('generateHTML', 'not set')})")
+
     def saveImage(self, image, filePath):
-        # Create cs subfolder
+        # Create date-gallery subfolder
         dir_path = os.path.dirname(filePath)
-        cs_dir = os.path.join(dir_path, "cs")
-        if not os.path.exists(cs_dir):
-            os.makedirs(cs_dir)
-            print(f"Created directory: {cs_dir}")
+
+        # Get date from EXIF for folder name
+        folder_date = ""
+        if hasattr(self, 'ExifTags') and 'EXIF_CaptureDate' in self.ExifTags and self.ExifTags['EXIF_CaptureDate']:
+            try:
+                from datetime import datetime
+                date_str = self.ExifTags['EXIF_CaptureDate']
+                date_obj = datetime.strptime(date_str, '%Y:%m:%d %H:%M:%S')
+                folder_date = date_obj.strftime('%Y-%m-%d')
+            except:
+                pass
+
+        if not folder_date:
+            from datetime import datetime
+            folder_date = datetime.now().strftime('%Y-%m-%d')
+
+        # Create folder name: YYYY-MM-DD Gallery Name
+        gallery_name = self.contactSheetConfiguration.get('galleryName', 'Contact Sheet')
+        folder_name = f"{folder_date} {gallery_name}"
+        gallery_dir = os.path.join(dir_path, folder_name)
+        if not os.path.exists(gallery_dir):
+            os.makedirs(gallery_dir)
+            print(f"Created directory: {gallery_dir}")
 
         # Determine output filename
         base_name = os.path.basename(filePath)
         if self.contactSheetConfiguration.get('renameFrames', False) and self.frameCounter > 0:
             # Use frame number as filename
-            fileName = os.path.join(cs_dir, f"{self.frameCounter:03d}_cs.jpg")
+            fileName = os.path.join(gallery_dir, f"{self.frameCounter:03d}_cs.jpg")
         else:
             # Use original filename
             fileName, fileExtension = os.path.splitext(base_name)
-            fileName = os.path.join(cs_dir, fileName + "_cs.jpg")
+            fileName = os.path.join(gallery_dir, fileName + "_cs.jpg")
 
         quality_val = self.contactSheetConfiguration["JPG_Quality"]
         image.save(fileName, 'JPEG', quality=quality_val)
         print(f"Saved: {fileName}")
+
+        # Store image info for HTML generation
+        if self.contactSheetConfiguration.get('generateHTML', False):
+            self.htmlImages.append({
+                'filename': os.path.basename(fileName),
+                'path': fileName,
+                'frame': self.frameCounter if self.frameCounter > 0 else None,
+                'exif': dict(self.ExifTags) if hasattr(self, 'ExifTags') else {}
+            })
+            print(f"Added image to HTML list: {os.path.basename(fileName)}")
+
+    def generateHTMLContactSheet(self):
+        """Generate an HTML contact sheet with all processed images and lightbox functionality"""
+        print(f"Starting HTML generation with {len(self.htmlImages)} images")
+
+        # Create date-gallery folder if it doesn't exist
+        if self.fileList:
+            dir_path = os.path.dirname(self.fileList[0])
+
+            # Determine the date for folder name from EXIF capture date
+            dates = []
+            for img_info in self.htmlImages:
+                # Try to extract date from EXIF capture date
+                if 'EXIF_CaptureDate' in img_info['exif'] and img_info['exif']['EXIF_CaptureDate']:
+                    try:
+                        from datetime import datetime
+                        date_str = img_info['exif']['EXIF_CaptureDate']
+                        # EXIF date format: YYYY:MM:DD HH:MM:SS
+                        date_obj = datetime.strptime(date_str, '%Y:%m:%d %H:%M:%S')
+                        dates.append(date_obj)
+                    except:
+                        pass
+
+            # Use the first date found, or fallback to today
+            if dates:
+                dates.sort()
+                folder_date = dates[0].strftime('%Y-%m-%d')
+            else:
+                from datetime import datetime
+                folder_date = datetime.now().strftime('%Y-%m-%d')
+
+            # Create folder name: YYYY-MM-DD Gallery Name
+            gallery_name = self.contactSheetConfiguration.get('galleryName', 'Contact Sheet')
+            folder_name = f"{folder_date} {gallery_name}"
+            gallery_dir = os.path.join(dir_path, folder_name)
+            if not os.path.exists(gallery_dir):
+                os.makedirs(gallery_dir)
+
+            # Generate HTML content
+            gallery_name = self.contactSheetConfiguration.get('galleryName', 'Contact Sheet')
+            html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>""" + gallery_name + """</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #000000;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #ffffff;
+            margin-bottom: 30px;
+        }
+        .grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+        .image-container {
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: border-color 0.2s;
+        }
+        .image-container:hover {
+            border-color: #666666;
+        }
+        .image-container img {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+        .date-range {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        .timestamp {
+            text-align: center;
+            color: #666;
+            margin-top: 30px;
+            font-size: 0.9em;
+        }
+
+        /* Lightbox styles */
+        .lightbox {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            cursor: pointer;
+        }
+        .lightbox-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+        }
+        .lightbox-close {
+            position: absolute;
+            top: 20px;
+            right: 35px;
+            color: #fff;
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 1001;
+        }
+        .lightbox-close:hover {
+            color: #ff9c00;
+        }
+        .lightbox-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #fff;
+            font-size: 30px;
+            font-weight: bold;
+            cursor: pointer;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 10px 15px;
+            border-radius: 5px;
+            user-select: none;
+        }
+        .lightbox-nav:hover {
+            color: #ff9c00;
+            background-color: rgba(0, 0, 0, 0.8);
+        }
+        .lightbox-prev {
+            left: 20px;
+        }
+        .lightbox-next {
+            right: 20px;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>""" + gallery_name + """</h1>
+        <div class="date-range" id="date-range"></div>
+        <div class="grid">
+"""
+
+            # Determine date range for display (reuse dates extracted above)
+            date_range_str = ""
+            if dates:
+                start_date = dates[0]
+                end_date = dates[-1]
+
+                if start_date.date() == end_date.date():
+                    # Single date
+                    date_range_str = start_date.strftime("%B %d, %Y")
+                else:
+                    # Date range
+                    if start_date.year == end_date.year:
+                        if start_date.month == end_date.month:
+                            # Same month
+                            date_range_str = f"{start_date.strftime('%B %d')} - {end_date.strftime('%d, %Y')}"
+                        else:
+                            # Same year, different months
+                            date_range_str = f"{start_date.strftime('%B %d')} - {end_date.strftime('%B %d, %Y')}"
+                    else:
+                        # Different years
+                        date_range_str = f"{start_date.strftime('%B %d, %Y')} - {end_date.strftime('%B %d, %Y')}"
+
+            # Add each image to the HTML
+            for i, img_info in enumerate(self.htmlImages):
+                # Use relative path for images
+                img_path = os.path.basename(img_info['path'])
+
+                # Determine the large image path (without _cs suffix)
+                large_img_path = img_path.replace('_cs.jpg', '.jpg')
+
+                html_content += f"""
+            <div class="image-container" onclick="openLightbox({i})">
+                <img src="{img_path}" alt="Image {i+1}" loading="lazy">
+            </div>
+"""
+
+            # Add lightbox HTML and JavaScript
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+            html_content += f"""
+        </div>
+        <div class="timestamp">Generated on {timestamp}</div>
+    </div>
+
+    <!-- Lightbox -->
+    <div id="lightbox" class="lightbox" onclick="closeLightbox()">
+        <span class="lightbox-close" onclick="closeLightbox()">&times;</span>
+        <div class="lightbox-nav lightbox-prev" onclick="event.stopPropagation(); previousImage()">&#10094;</div>
+        <div class="lightbox-nav lightbox-next" onclick="event.stopPropagation(); nextImage()">&#10095;</div>
+        <img class="lightbox-content" id="lightbox-image" onclick="event.stopPropagation();">
+
+    </div>
+
+    <script>
+        // Image data for lightbox
+        const images = ["""
+
+            # Add image data for JavaScript
+            for i, img_info in enumerate(self.htmlImages):
+                large_img_path = img_info['path'].replace('_cs.jpg', '.jpg')
+                large_img_path = os.path.basename(large_img_path)
+
+                if i > 0:
+                    html_content += ","
+                html_content += f"""
+            {{
+                src: "{large_img_path}"
+            }}"""
+
+            html_content += """
+        ];
+
+        let currentImageIndex = 0;
+
+        function openLightbox(index) {
+            currentImageIndex = index;
+            const lightbox = document.getElementById('lightbox');
+            const lightboxImage = document.getElementById('lightbox-image');
+
+            lightboxImage.src = images[index].src;
+
+            lightbox.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').style.display = 'none';
+            document.body.style.overflow = 'auto';
+        }
+
+        function nextImage() {
+            currentImageIndex = (currentImageIndex + 1) % images.length;
+            openLightbox(currentImageIndex);
+        }
+
+        function previousImage() {
+            currentImageIndex = (currentImageIndex - 1 + images.length) % images.length;
+            openLightbox(currentImageIndex);
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', function(event) {
+            const lightbox = document.getElementById('lightbox');
+            if (lightbox.style.display === 'block') {
+                switch(event.key) {
+                    case 'Escape':
+                        closeLightbox();
+                        break;
+                    case 'ArrowRight':
+                        nextImage();
+                        break;
+                    case 'ArrowLeft':
+                        previousImage();
+                        break;
+                }
+            }
+        });
+
+        // Set date range
+        const dateRangeElement = document.getElementById('date-range');
+        const dateRange = '""" + date_range_str + """';
+        if (dateRange) {
+            dateRangeElement.textContent = dateRange;
+        }
+    </script>
+</body>
+</html>
+"""
+
+            # Write HTML file
+            html_path = os.path.join(gallery_dir, "index.html")
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+
+            print(f"\nGenerated HTML gallery: {html_path}")
+        else:
+            print("No images found for HTML generation")
 
     def getImagesFromDirectory(self, directory):
         path = directory
@@ -421,21 +757,47 @@ class ContactSheetGenerator(object):
             sharpen_filter = ImageFilter.UnsharpMask(radius=1, percent=100, threshold=3)
             image = image.filter(sharpen_filter)
 
-            # Create cs subfolder
+            # Create gallery subfolder
             dir_path = os.path.dirname(filePath)
-            cs_dir = os.path.join(dir_path, "cs")
-            if not os.path.exists(cs_dir):
-                os.makedirs(cs_dir)
+
+            # Get date from EXIF for folder name
+            folder_date = ""
+            if hasattr(self, 'ExifTags') and 'EXIF_CaptureDate' in self.ExifTags and self.ExifTags['EXIF_CaptureDate']:
+                try:
+                    from datetime import datetime
+                    date_str = self.ExifTags['EXIF_CaptureDate']
+                    date_obj = datetime.strptime(date_str, '%Y:%m:%d %H:%M:%S')
+                    folder_date = date_obj.strftime('%Y-%m-%d')
+                except:
+                    pass
+
+            if not folder_date:
+                from datetime import datetime
+                folder_date = datetime.now().strftime('%Y-%m-%d')
+
+            # Create folder name: YYYY-MM-DD Gallery Name
+            gallery_name = self.contactSheetConfiguration.get('galleryName', 'Contact Sheet')
+            folder_name = f"{folder_date} {gallery_name}"
+            gallery_dir = os.path.join(dir_path, folder_name)
+            if not os.path.exists(gallery_dir):
+                os.makedirs(gallery_dir)
 
             # Determine output filename
             base_name = os.path.basename(filePath)
             if self.contactSheetConfiguration.get('renameFrames', False) and self.frameCounter > 0:
                 # Use frame number as filename
-                output_name = os.path.join(cs_dir, f"{self.frameCounter:03d}.jpg")
+                output_name = os.path.join(gallery_dir, f"{self.frameCounter:03d}.jpg")
             else:
                 # Use original filename
                 name_only, ext = os.path.splitext(base_name)
-                output_name = os.path.join(cs_dir, f"{name_only}.jpg")
+                output_name = os.path.join(gallery_dir, f"{name_only}.jpg")
+
+            # Convert RGBA to RGB if necessary for JPEG
+            if image.mode == 'RGBA':
+                # Create a white background and paste the image on it
+                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                rgb_image.paste(image, mask=image.split()[-1])  # Use alpha channel as mask
+                image = rgb_image
 
             # Save with high quality
             image.save(output_name, 'JPEG', quality=95)
@@ -689,8 +1051,16 @@ def main():
     parser.add_argument('--show-filename', action='store_true', help='Show filename instead of date at top of image')
     parser.add_argument('--rename', action='store_true', help='Rename output files to frame numbers')
     parser.add_argument('--export', action='store_true', help='Export 2000px wide JPEGs of input files')
+    parser.add_argument('--html', action='store_true', help='Generate HTML contact sheet with lightbox (automatically enables --export)')
+    parser.add_argument('--gallery-name', type=str, default='Contact Sheet', help='Name for the HTML gallery (default: Contact Sheet)')
 
     args = parser.parse_args()
+
+    # Automatically enable export and rename when HTML is requested (for lightbox functionality)
+    if args.html:
+        args.export = True
+        args.rename = True
+        print("HTML generation enabled - automatically enabling --export and --rename for lightbox functionality")
 
     # Configure settings
     config = {
@@ -700,7 +1070,9 @@ def main():
         'sharpen': not args.no_sharpen,
         'showFilename': args.show_filename,
         'renameFrames': args.rename,
-        'export2000px': args.export
+        'export2000px': args.export,
+        'generateHTML': args.html,
+        'galleryName': args.gallery_name
     }
 
     # Handle custom text

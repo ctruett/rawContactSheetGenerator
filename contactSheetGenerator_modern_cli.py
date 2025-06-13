@@ -188,10 +188,41 @@ class ContactSheetGenerator(object):
         else:
             baseMargin = (image.size[1] // 100) * percent
 
+        # Calculate minimum space needed for text
+        fontsize = self.contactSheetConfiguration["contactSheetWidth"] // 12
+        fontScale = 0.3
+        text_height = int(fontsize * fontScale * 1.4)  # 1.4x for padding (reduced from 1.5x)
+        min_text_space = text_height + 15  # Text height + comfortable padding (reduced from 20)
+
         # All margins are reduced by half
         topMargin = baseMargin // 2
         sideMargin = baseMargin // 2
         bottomMargin = baseMargin // 2
+
+        # If text won't fit in top margin, scale image down to make room
+        scale_factor = 1.0
+        if topMargin < min_text_space:
+            # Calculate how much we need to scale the image
+            # We want: topMargin + scaled_image_height + bottomMargin = original_canvas_height
+            # But with enough topMargin for text
+            needed_reduction = min_text_space - topMargin
+            scale_factor = 1.0 - (needed_reduction / image.size[1])
+            scale_factor = max(scale_factor, 0.9)  # Don't scale below 90%
+
+            # Scale the image
+            scaled_width = int(image.size[0] * scale_factor)
+            scaled_height = int(image.size[1] * scale_factor)
+            image = image.resize((scaled_width, scaled_height), Image.Resampling.LANCZOS)
+
+            # Recalculate margins based on scaled image to maintain proportions
+            if image.size[0] > image.size[1]:
+                baseMargin = (image.size[0] // 100) * percent
+            else:
+                baseMargin = (image.size[1] // 100) * percent
+
+            topMargin = max(baseMargin // 2, min_text_space)
+            sideMargin = baseMargin // 2
+            bottomMargin = baseMargin // 2
 
         # Store the actual crop dimensions for text positioning
         self.actualCropWidth = sideMargin
@@ -226,17 +257,13 @@ class ContactSheetGenerator(object):
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
             print(f"Warning: Could not extract EXIF data from {imagePath}")
 
-    def imageGenerateSpreadText(self, image, text_parts, image_width):
-        if not text_parts:
+    def imageGenerateSpreadText(self, image, text_string, image_width):
+        if not text_string:
             return image
 
         fontColor = self.contactSheetConfiguration["fontColor"]
         fontsize = self.contactSheetConfiguration["contactSheetWidth"] // 12
-        # Adjust font scale based on margin size to ensure text fits
-        if self.actualCropHeight < 40:
-            fontScale = 0.25  # Smaller scale for tight margins
-        else:
-            fontScale = 0.3
+        fontScale = 0.3
 
         # Try to find Iosvmata font or fallback to system fonts
         font_paths = [
@@ -269,54 +296,41 @@ class ContactSheetGenerator(object):
         # Align text with the left edge of the image frame
         image_left_edge = cropWidth
 
-        # Start position and consistent spacing
-        # Reduce spacing for smaller margins
-        element_spacing = 15 if self.actualCropHeight < 40 else 20
-        current_x = image_left_edge  # Align with left edge of image frame
+        # Create text image for the entire string
+        try:
+            bbox = font.getbbox(text_string)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+        except:
+            # Fallback for older PIL versions
+            text_width, text_height = font.getsize(text_string)
 
-        # Position text in the center of the top margin area
-        # Top margin goes from 0 to cropHeight
+        # Add padding to prevent clipping
+        padding = fontsize // 2
+        textImage = Image.new('RGBA', (text_width + padding * 2, text_height + padding * 2), (0, 0, 0, 0))
+        textImageDraw = ImageDraw.Draw(textImage)
+        textImageDraw.text((padding, padding), text_string, font=font, fill=fontColor)
 
-        for i, text in enumerate(text_parts):
-            try:
-                bbox = font.getbbox(text)
-                text_width = bbox[2] - bbox[0]
-                text_height = bbox[3] - bbox[1]
-            except:
-                # Fallback for older PIL versions
-                text_width, text_height = font.getsize(text)
+        textImage = textImage.resize((int(textImage.size[0] * fontScale),
+                                     int(textImage.size[1] * fontScale)),
+                                    Image.Resampling.LANCZOS)
 
-            # Add padding to prevent clipping
-            padding = fontsize // 2
-            textImage = Image.new('RGBA', (text_width + padding * 2, text_height + padding * 2), (0, 0, 0, 0))
-            textImageDraw = ImageDraw.Draw(textImage)
-            textImageDraw.text((padding, padding), text, font=font, fill=fontColor)
+        # Calculate vertical offset
+        padding = 6  # Padding between text bottom and image top
+        vertOffset = cropHeight - textImage.size[1] - padding + 2  # Move down by 2px
 
-            textImage = textImage.resize((int(textImage.size[0] * fontScale),
-                                         int(textImage.size[1] * fontScale)),
-                                        Image.Resampling.LANCZOS)
+        # Make sure text doesn't go above the top edge
+        if vertOffset < 2:
+            vertOffset = 2  # Minimum 2px from top edge
 
-            # Calculate vertical offset for this specific text element
-            # Position text close to the image with small padding
-            # Ensure text stays within the top margin bounds
-            padding = 5  # Reduced padding for smaller margins
-            vertOffset = cropHeight - textImage.size[1] - padding
+        # Left-aligned positioning with slight offset
+        horOffset = image_left_edge - 4
 
-            # Make sure text doesn't go above the top edge
-            if vertOffset < 2:
-                vertOffset = 2  # Minimum 2px from top edge
-
-            # Left-aligned positioning with consistent spacing
-            horOffset = current_x
-
-            # Move to next position for next element
-            current_x += textImage.size[0] + element_spacing
-
-            image.paste(textImage, (int(horOffset), int(vertOffset)), textImage)
+        image.paste(textImage, (int(horOffset), int(vertOffset)), textImage)
 
         return image
 
-    def imageWriteExif(self, image, fileName):
+    def imageWriteExif(self, image, fileName, original_width=None):
         # Create single line with: Camera, ISO, shutter, aperture, filename
         top_line_parts = []
 
@@ -356,9 +370,13 @@ class ContactSheetGenerator(object):
         filename = os.path.basename(fileName)
         top_line_parts.append(filename)
 
-        # Create spread out text instead of combined
+        # Create single text string with spacing
         if top_line_parts:
-            image = self.imageGenerateSpreadText(image, top_line_parts, self.imageWidth)
+            # Join all parts with consistent spacing
+            text_string = "    ".join(top_line_parts)  # 4 spaces between elements
+            # Use original width if provided, otherwise fall back to stored width
+            width_to_use = original_width if original_width is not None else self.imageWidth
+            image = self.imageGenerateSpreadText(image, text_string, width_to_use)
 
         return image
 
@@ -492,8 +510,11 @@ class ContactSheetGenerator(object):
         if self.contactSheetConfiguration["sharpen"]:
             image = self.imageSharpen(image, sharpenAmount)
 
+        # Store dimensions before expansion (in case image gets scaled)
+        pre_expansion_width = image.size[0]
+
         image = self.imageCanvasExpand(image, expandPercent)
-        image = self.imageWriteExif(image, file)
+        image = self.imageWriteExif(image, file, pre_expansion_width)
 
         if self.contactSheetConfiguration["histogramInfo"]:
             image = self.pasteHistogram(image, imageHistogram)

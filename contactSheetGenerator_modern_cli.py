@@ -199,13 +199,15 @@ class ContactSheetGenerator(object):
         sideMargin = baseMargin // 2
         bottomMargin = baseMargin // 2
 
-        # If text won't fit in top margin, scale image down to make room
+        # If text won't fit in margins, scale image down to make room
         scale_factor = 1.0
-        if topMargin < min_text_space:
+        # Check if either top or bottom margin needs more space
+        if topMargin < min_text_space or bottomMargin < min_text_space:
             # Calculate how much we need to scale the image
-            # We want: topMargin + scaled_image_height + bottomMargin = original_canvas_height
-            # But with enough topMargin for text
-            needed_reduction = min_text_space - topMargin
+            # We need enough space in both top and bottom margins
+            needed_top = max(0, min_text_space - topMargin)
+            needed_bottom = max(0, min_text_space - bottomMargin)
+            needed_reduction = max(needed_top, needed_bottom)
             scale_factor = 1.0 - (needed_reduction / image.size[1])
             scale_factor = max(scale_factor, 0.9)  # Don't scale below 90%
 
@@ -222,7 +224,7 @@ class ContactSheetGenerator(object):
 
             topMargin = max(baseMargin // 2, min_text_space)
             sideMargin = baseMargin // 2
-            bottomMargin = baseMargin // 2
+            bottomMargin = max(baseMargin // 2, min_text_space)
 
         # Store the actual crop dimensions for text positioning
         self.actualCropWidth = sideMargin
@@ -257,7 +259,7 @@ class ContactSheetGenerator(object):
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
             print(f"Warning: Could not extract EXIF data from {imagePath}")
 
-    def imageGenerateSpreadText(self, image, text_string, image_width):
+    def imageGenerateSpreadText(self, image, text_string, image_width, position="top"):
         if not text_string:
             return image
 
@@ -291,6 +293,7 @@ class ContactSheetGenerator(object):
         # Use the stored actual crop dimensions from canvas expansion
         cropWidth = self.actualCropWidth
         cropHeight = self.actualCropHeight
+        bottomMargin = self.actualBottomMargin
 
         # The image frame starts at (cropWidth, cropHeight) after expansion
         # Align text with the left edge of the image frame
@@ -315,42 +318,57 @@ class ContactSheetGenerator(object):
                                      int(textImage.size[1] * fontScale)),
                                     Image.Resampling.LANCZOS)
 
-        # Calculate vertical offset
-        padding = 6  # Padding between text bottom and image top
-        vertOffset = cropHeight - textImage.size[1] - padding + 2  # Move down by 2px
+        # Calculate vertical offset based on position
+        if position == "top":
+            padding = 6  # Padding between text bottom and image top
+            vertOffset = cropHeight - textImage.size[1] - padding + 1  # Move down by 2px
 
-        # Make sure text doesn't go above the top edge
-        if vertOffset < 2:
-            vertOffset = 2  # Minimum 2px from top edge
+            # Make sure text doesn't go above the top edge
+            if vertOffset < 2:
+                vertOffset = 2  # Minimum 2px from top edge
+        else:  # bottom
+            # Position text in bottom margin
+            # Calculate where the image bottom is
+            # Total height - bottom margin = where image ends
+            image_bottom = image.size[1] - bottomMargin
+            padding = 6  # Padding between image bottom and text top
+            vertOffset = image_bottom + padding - 3  # Move up by 3px
 
         # Left-aligned positioning with slight offset
-        horOffset = image_left_edge - 4
+        horOffset = image_left_edge - 7
 
         image.paste(textImage, (int(horOffset), int(vertOffset)), textImage)
 
         return image
 
     def imageWriteExif(self, image, fileName, original_width=None):
-        # Create single line with: Camera, ISO, shutter, aperture, filename
-        top_line_parts = []
+        # Put filename at top
+        import os
+        filename = os.path.basename(fileName)
+        if filename:
+            width_to_use = original_width if original_width is not None else self.imageWidth
+            image = self.imageGenerateSpreadText(image, filename, width_to_use, position="top")
+
+        # Create EXIF info for bottom: Camera, ISO, shutter, aperture
+        bottom_line_parts = []
 
         # Camera
         if self.ExifTagsShow.get("EXIF_camera", False) and "EXIF_camera" in self.ExifTags:
-            top_line_parts.append(self.ExifTags["EXIF_camera"])
+            bottom_line_parts.append(self.ExifTags["EXIF_camera"])
 
         # ISO
         if self.ExifTagsShow.get("EXIF_ISO", False) and "EXIF_ISO" in self.ExifTags:
             iso_text = self.ExifTags["EXIF_ISO"]
             if not iso_text.startswith("ISO"):
                 iso_text = f"ISO {iso_text}"
-            top_line_parts.append(iso_text)
+            bottom_line_parts.append(iso_text)
 
         # Shutter speed
         if self.ExifTagsShow.get("EXIF_shutter", False) and "EXIF_shutter" in self.ExifTags:
             shutter_text = self.ExifTags["EXIF_shutter"]
             if "/" in shutter_text and not shutter_text.endswith("s"):
                 shutter_text = f"{shutter_text}s"
-            top_line_parts.append(shutter_text)
+            bottom_line_parts.append(shutter_text)
 
         # Aperture
         if self.ExifTagsShow.get("EXIF_aperture", False) and "EXIF_aperture" in self.ExifTags:
@@ -363,20 +381,15 @@ class ContactSheetGenerator(object):
             elif aperture_text.startswith("F"):
                 aperture_text = aperture_text[1:]  # Remove "F"
             aperture_text = f"f/{aperture_text}"
-            top_line_parts.append(aperture_text)
+            bottom_line_parts.append(aperture_text)
 
-        # Filename
-        import os
-        filename = os.path.basename(fileName)
-        top_line_parts.append(filename)
-
-        # Create single text string with spacing
-        if top_line_parts:
+        # Create single text string with spacing for bottom line
+        if bottom_line_parts:
             # Join all parts with consistent spacing
-            text_string = "    ".join(top_line_parts)  # 4 spaces between elements
+            text_string = "    ".join(bottom_line_parts)  # 4 spaces between elements
             # Use original width if provided, otherwise fall back to stored width
             width_to_use = original_width if original_width is not None else self.imageWidth
-            image = self.imageGenerateSpreadText(image, text_string, width_to_use)
+            image = self.imageGenerateSpreadText(image, text_string, width_to_use, position="bottom")
 
         return image
 

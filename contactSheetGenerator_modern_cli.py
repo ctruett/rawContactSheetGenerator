@@ -17,6 +17,7 @@ from datetime import datetime
 from io import BytesIO
 import time
 import argparse
+import math
 
 class ContactSheetGenerator(object):
     def __init__(self, directory_in="", config=None):
@@ -133,6 +134,7 @@ class ContactSheetGenerator(object):
         self.frameCounter = 0  # Frame counter for folder processing
         self.isProcessingFolder = False  # Track if processing a folder
         self.htmlImages = []  # Store image info for HTML generation
+        self.contactSheetImages = []  # Store processed images for contact sheet generation
 
         if directory_in:
             self.getImagesFromDirectory(directory_in)
@@ -152,7 +154,18 @@ class ContactSheetGenerator(object):
 
             self.extractShootingInformation(fileName)
             image = self.makeThumb(fileName)
-            self.saveImage(image, fileName)
+
+            # Store image for contact sheet generation if requested
+            if self.contactSheetConfiguration.get('generateContactSheet', False):
+                self.contactSheetImages.append({
+                    'image': image.copy(),
+                    'filename': os.path.basename(fileName),
+                    'filepath': fileName
+                })
+                # Skip saving individual images when generating contact sheet
+                print(f"Stored image for contact sheet: {os.path.basename(fileName)}")
+            else:
+                self.saveImage(image, fileName)
 
             # Export 2000px version if requested
             if self.contactSheetConfiguration.get('export2000px', False):
@@ -167,6 +180,13 @@ class ContactSheetGenerator(object):
             self.generateHTMLContactSheet()
         else:
             print(f"HTML generation disabled (generateHTML: {self.contactSheetConfiguration.get('generateHTML', 'not set')})")
+
+        # Generate PNG contact sheet if requested
+        if self.contactSheetConfiguration.get('generateContactSheet', False):
+            print(f"PNG contact sheet generation enabled, calling generatePNGContactSheet()")
+            self.generatePNGContactSheet()
+        else:
+            print(f"PNG contact sheet generation disabled (generateContactSheet: {self.contactSheetConfiguration.get('generateContactSheet', 'not set')})")
 
     def saveImage(self, image, filePath):
         # Create date-gallery subfolder
@@ -218,6 +238,73 @@ class ContactSheetGenerator(object):
                 'exif': dict(self.ExifTags) if hasattr(self, 'ExifTags') else {}
             })
             print(f"Added image to HTML list: {os.path.basename(fileName)}")
+
+
+
+
+
+    def generatePNGContactSheet(self):
+        """Generate a single PNG contact sheet with all processed images"""
+        if not self.contactSheetImages:
+            print("No images available for contact sheet generation")
+            return
+
+        print(f"Creating contact sheet with {len(self.contactSheetImages)} images")
+
+        # Calculate grid dimensions
+        num_images = len(self.contactSheetImages)
+        if num_images == 1:
+            cols, rows = 1, 1
+        elif num_images <= 4:
+            cols, rows = 2, 2
+        elif num_images <= 9:
+            cols, rows = 3, 3
+        elif num_images <= 16:
+            cols, rows = 4, 4
+        elif num_images <= 25:
+            cols, rows = 5, 5
+        else:
+            # For larger numbers, use a rectangular grid
+            cols = int(math.ceil(math.sqrt(num_images * 1.5)))
+            rows = int(math.ceil(num_images / cols))
+
+        # Get dimensions of first image to calculate contact sheet size
+        first_image = self.contactSheetImages[0]['image']
+        img_width, img_height = first_image.size
+
+        # Calculate contact sheet dimensions with padding
+        padding = 20
+        contact_width = cols * img_width + (cols + 1) * padding
+        contact_height = rows * img_height + (rows + 1) * padding
+
+        # Create blank contact sheet
+        contact_sheet = Image.new('RGB', (contact_width, contact_height), 'black')
+
+        # Paste images into contact sheet
+        for i, img_data in enumerate(self.contactSheetImages):
+            if i >= cols * rows:  # Don't exceed grid capacity
+                break
+
+            row = i // cols
+            col = i % cols
+
+            x = col * img_width + (col + 1) * padding
+            y = row * img_height + (row + 1) * padding
+
+            # Paste the image
+            contact_sheet.paste(img_data['image'], (x, y))
+
+            print(f"Placed image {i+1}/{len(self.contactSheetImages)}: {img_data['filename']}")
+
+        # Save contact sheet in input folder
+        dir_path = os.path.dirname(self.contactSheetImages[0]['filepath'])
+
+        # Save as PNG directly in input folder
+        contact_sheet_path = os.path.join(dir_path, "contact-sheet.png")
+        contact_sheet.save(contact_sheet_path, 'PNG')
+        print(f"Contact sheet saved: {contact_sheet_path}")
+        print(f"Contact sheet dimensions: {contact_width}x{contact_height} pixels")
+        print(f"Grid layout: {cols}x{rows} images")
 
 
 
@@ -851,11 +938,39 @@ class ContactSheetGenerator(object):
             width_to_use = original_width if original_width is not None else self.imageWidth
             image = self.imageGenerateSpreadText(image, top_text, width_to_use, position="top")
 
-        # Add frame counter in top right if processing folder
+        # Add frame counter in top right if processing folder, or date if in PNG contact sheet mode
         if self.isProcessingFolder and self.frameCounter > 0:
-            frame_text = f"{self.frameCounter:03d}"
-            width_to_use = original_width if original_width is not None else self.imageWidth
-            image = self.imageGenerateSpreadText(image, frame_text, width_to_use, position="top", align="right")
+            if self.contactSheetConfiguration.get('generateContactSheet', False):
+                # Show formatted date in top right for PNG contact sheet mode
+                date_str = None
+                if self.ExifTags.get("EXIF_CaptureDate"):
+                    date_str = self.ExifTags["EXIF_CaptureDate"]
+                elif self.ExifTags.get("EXIF_Date"):
+                    date_str = self.ExifTags["EXIF_Date"]
+
+                if date_str:
+                    try:
+                        # Parse the EXIF date format
+                        dt = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
+                        # Get ordinal suffix for day
+                        day = dt.day
+                        if 11 <= day <= 13:
+                            suffix = 'th'
+                        else:
+                            suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+                        # Format as "May 6th, 2025"
+                        date_text = dt.strftime(f"%B {day}{suffix}, %Y")
+                    except:
+                        # Fallback to original date string if parsing fails
+                        date_text = date_str
+
+                    width_to_use = original_width if original_width is not None else self.imageWidth
+                    image = self.imageGenerateSpreadText(image, date_text, width_to_use, position="top", align="right")
+            else:
+                # Show frame counter for normal mode
+                frame_text = f"{self.frameCounter:03d}"
+                width_to_use = original_width if original_width is not None else self.imageWidth
+                image = self.imageGenerateSpreadText(image, frame_text, width_to_use, position="top", align="right")
 
         # Create EXIF info for bottom: Camera, ISO, shutter, aperture
         bottom_line_parts = []
@@ -1055,6 +1170,7 @@ def main():
     parser.add_argument('--rename', action='store_true', help='Rename output files to frame numbers')
     parser.add_argument('--export', action='store_true', help='Export 2000px wide JPEGs of input files')
     parser.add_argument('--html', action='store_true', help='Generate HTML contact sheet with lightbox (automatically enables --export)')
+    parser.add_argument('--png', action='store_true', help='Generate a single PNG contact sheet image with all frames')
 
     parser.add_argument('--gallery-name', type=str, default='Contact Sheet', help='Name for the HTML gallery (default: Contact Sheet)')
 
@@ -1066,6 +1182,11 @@ def main():
         args.rename = True
         print("HTML generation enabled - automatically enabling --export and --rename for lightbox functionality")
 
+    # Automatically enable show-filename when PNG contact sheet is requested
+    if args.png:
+        args.show_filename = True
+        print("PNG contact sheet generation enabled - automatically enabling --show-filename")
+
     # Configure settings
     config = {
         'contactSheetWidth': args.width,
@@ -1076,6 +1197,7 @@ def main():
         'renameFrames': args.rename,
         'export2000px': args.export,
         'generateHTML': args.html,
+        'generateContactSheet': args.png,
         'galleryName': args.gallery_name
     }
 
@@ -1104,7 +1226,7 @@ def main():
                 return 1
 
     print(f"\nProcessing: {args.input}")
-    print(f"Settings: Width={args.width}, Quality={args.quality}, Histogram={args.histogram}")
+    print(f"Settings: Width={args.width}, Quality={args.quality}, Histogram={args.histogram}, ContactSheet={args.png}")
 
     # Create generator and process
     try:

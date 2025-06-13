@@ -15,6 +15,7 @@ A Python tool for creating professional contact sheets from RAW images and stand
 - **Date-based Organization**: Automatic folder naming with date and gallery name
 - **Organized Output**: All output files are saved to date-gallery subfolders
 - **Export Options**: Generate 2000px wide JPEGs alongside contact sheets
+- **PNG Contact Sheets**: Create single PNG contact sheet with all frames arranged in a grid
 
 ## Requirements
 
@@ -59,6 +60,9 @@ python contactSheetGenerator_modern_cli.py --histogram /path/to/images
 # Generate HTML gallery with lightbox
 python contactSheetGenerator_modern_cli.py --html --gallery-name "My Photo Shoot" /path/to/images
 
+# Generate PNG contact sheet with all frames
+python contactSheetGenerator_modern_cli.py --png /path/to/images
+
 # Disable sharpening
 python contactSheetGenerator_modern_cli.py --no-sharpen /path/to/images
 ```
@@ -75,6 +79,7 @@ python contactSheetGenerator_modern_cli.py --no-sharpen /path/to/images
 - `--rename`: Rename output files to frame numbers (001.jpg, 002.jpg, etc.)
 - `--export`: Export 2000px wide JPEGs of input files in addition to contact sheets
 - `--html`: Generate HTML contact sheet with lightbox (automatically enables --export and --rename)
+- `--png`: Generate single PNG contact sheet with all frames in grid layout (automatically enables --show-filename)
 - `--gallery-name`: Name for the HTML gallery (default: "Contact Sheet")
 
 ## Output
@@ -84,6 +89,13 @@ All output files are saved in a `cs` subfolder within the source directory:
 - Contact sheets: `cs/IMG_1234_cs.jpg`
 - 2000px exports: `cs/IMG_1234.jpg` (with `--export`)
 - Frame-numbered: `cs/001_cs.jpg`, `cs/001.jpg` (with `--rename`)
+
+### PNG Contact Sheet Output
+When using `--png`, a single contact sheet is generated:
+- **contact-sheet.png**: Single image with all frames arranged in optimal grid layout
+- **Black background** with filename and date overlays on each frame
+- **Saved directly in source directory** for easy access
+- **Automatic grid sizing**: 1×1 to 5×5+ grids based on number of images
 
 ### HTML Gallery Output
 When using `--html`, files are organized in date-gallery folders:

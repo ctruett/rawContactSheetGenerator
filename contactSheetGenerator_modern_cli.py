@@ -149,6 +149,7 @@ class ContactSheetGenerator(object):
             if self.isProcessingFolder or self.contactSheetConfiguration.get('renameFrames', False):
                 self.frameCounter += 1
             print(f"Processing: {os.path.basename(fileName)}")
+
             self.extractShootingInformation(fileName)
             image = self.makeThumb(fileName)
             self.saveImage(image, fileName)
@@ -217,6 +218,8 @@ class ContactSheetGenerator(object):
                 'exif': dict(self.ExifTags) if hasattr(self, 'ExifTags') else {}
             })
             print(f"Added image to HTML list: {os.path.basename(fileName)}")
+
+
 
     def generateHTMLContactSheet(self):
         """Generate an HTML contact sheet with all processed images and lightbox functionality"""
@@ -1052,6 +1055,7 @@ def main():
     parser.add_argument('--rename', action='store_true', help='Rename output files to frame numbers')
     parser.add_argument('--export', action='store_true', help='Export 2000px wide JPEGs of input files')
     parser.add_argument('--html', action='store_true', help='Generate HTML contact sheet with lightbox (automatically enables --export)')
+
     parser.add_argument('--gallery-name', type=str, default='Contact Sheet', help='Name for the HTML gallery (default: Contact Sheet)')
 
     args = parser.parse_args()

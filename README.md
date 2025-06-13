@@ -5,12 +5,14 @@ A Python tool for creating professional contact sheets from RAW images and stand
 ## Features
 
 - **Wide Format Support**: Process RAW files (CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2, PEF, SRW) and standard formats (JPEG, TIFF, PPM)
-- **EXIF Display**: Shows camera model, ISO, shutter speed, aperture, and filename
-- **Batch Processing**: Process entire directories of images
+- **EXIF Display**: Shows camera model, ISO, shutter speed, aperture, and photo date/time
+- **Batch Processing**: Process entire directories of images with automatic frame numbering
 - **Auto-Rotation**: Automatically rotates portrait images to landscape
 - **Image Enhancement**: Optional sharpening and auto-contrast
 - **Histogram Overlay**: Display RGB histogram on contact sheets
 - **Optimized Layout**: Compact margins with well-positioned metadata text
+- **Organized Output**: All output files are saved to a `cs` subfolder
+- **Export Options**: Generate 2000px wide JPEGs alongside contact sheets
 
 ## Requirements
 
@@ -64,11 +66,16 @@ python contactSheetGenerator_modern_cli.py --no-sharpen /path/to/images
 - `--no-exif`: Disable EXIF information display
 - `--no-sharpen`: Disable automatic sharpening
 - `--custom-text`: Enable custom text overlay
+- `--show-filename`: Show filename instead of photo date at top of image
+- `--rename`: Rename output files to frame numbers (001.jpg, 002.jpg, etc.)
+- `--export`: Export 2000px wide JPEGs of input files in addition to contact sheets
 
 ## Output
 
-Contact sheets are saved in the source directory with "_contactSheet" suffix:
-- `IMG_1234.CR2` → `IMG_1234_contactSheet.jpg`
+All output files are saved in a `cs` subfolder within the source directory:
+- Contact sheets: `cs/IMG_1234_cs.jpg`
+- 2000px exports: `cs/IMG_1234.jpg` (with `--export`)
+- Frame-numbered: `cs/001_cs.jpg`, `cs/001.jpg` (with `--rename`)
 
 ## License
 

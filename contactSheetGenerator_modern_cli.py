@@ -13,6 +13,7 @@ from PIL import ImageFilter
 import sys
 import os
 import subprocess
+from datetime import datetime
 from io import BytesIO
 import time
 import argparse
@@ -54,6 +55,7 @@ class ContactSheetGenerator(object):
             "EXIF_camera": "Exif.Image.Model",
             "EXIF_make": "Exif.Image.Make",
             "EXIF_Date": "Exif.Image.DateTime",
+            "EXIF_CaptureDate": "Exif.Photo.DateTimeOriginal",
             "EXIF_shutter": "Exif.Photo.ExposureTime",
             "EXIF_author": "Exif.Image.Artist",
             "EXIF_aperture": "Exif.Photo.FNumber",
@@ -79,6 +81,7 @@ class ContactSheetGenerator(object):
             "EXIF_camera": ["top", 0],
             "EXIF_make": ["panel", 0],
             "EXIF_Date": ["panel", 0],
+            "EXIF_CaptureDate": ["panel", 0],
             "EXIF_shutter": ["top", 0],
             "EXIF_author": ["panel", 0],
             "EXIF_aperture": ["top", 0],
@@ -100,6 +103,7 @@ class ContactSheetGenerator(object):
             "EXIF_camera": True,
             "EXIF_make": True,
             "EXIF_Date": True,
+            "EXIF_CaptureDate": True,
             "EXIF_shutter": True,
             "EXIF_author": True,
             "EXIF_aperture": True,
@@ -126,6 +130,8 @@ class ContactSheetGenerator(object):
         self.actualCropWidth = 0  # Store actual crop width used
         self.actualCropHeight = 0  # Store actual crop height used
         self.actualBottomMargin = 0  # Store actual bottom margin used
+        self.frameCounter = 0  # Frame counter for folder processing
+        self.isProcessingFolder = False  # Track if processing a folder
 
         if directory_in:
             self.getImagesFromDirectory(directory_in)
@@ -133,18 +139,44 @@ class ContactSheetGenerator(object):
 
     def processFiles(self):
         print("Processing files:")
+        # Set folder processing flag if we have multiple files
+        self.isProcessingFolder = len(self.fileList) > 1
+        self.frameCounter = 0
+
         for fileName in self.fileList:
             t0 = time.time()
+            if self.isProcessingFolder:
+                self.frameCounter += 1
             print(f"Processing: {os.path.basename(fileName)}")
             self.extractShootingInformation(fileName)
             image = self.makeThumb(fileName)
             self.saveImage(image, fileName)
+
+            # Export 2000px version if requested
+            if self.contactSheetConfiguration.get('export2000px', False):
+                self.export2000pxVersion(fileName)
+
             t1 = time.time()
             print(f"{fileName} done in {t1-t0:.2f} seconds")
 
     def saveImage(self, image, filePath):
-        fileName, fileExtension = os.path.splitext(filePath)
-        fileName = fileName + "_cs.jpg"
+        # Create cs subfolder
+        dir_path = os.path.dirname(filePath)
+        cs_dir = os.path.join(dir_path, "cs")
+        if not os.path.exists(cs_dir):
+            os.makedirs(cs_dir)
+            print(f"Created directory: {cs_dir}")
+
+        # Determine output filename
+        base_name = os.path.basename(filePath)
+        if self.contactSheetConfiguration.get('renameFrames', False) and self.frameCounter > 0:
+            # Use frame number as filename
+            fileName = os.path.join(cs_dir, f"{self.frameCounter:03d}_cs.jpg")
+        else:
+            # Use original filename
+            fileName, fileExtension = os.path.splitext(base_name)
+            fileName = os.path.join(cs_dir, fileName + "_cs.jpg")
+
         quality_val = self.contactSheetConfiguration["JPG_Quality"]
         image.save(fileName, 'JPEG', quality=quality_val)
         print(f"Saved: {fileName}")
@@ -175,9 +207,12 @@ class ContactSheetGenerator(object):
                                 break
                         self.fileList.append(fileName)
                     else:
-                        print(f"---overwrite warning: {fileName}")
+                        pass
 
-        print("Files to process:")
+        # Sort files alphabetically for consistent frame numbering
+        self.fileList.sort()
+
+        print("\nFiles to process:")
         for f in self.fileList:
             print(f"  {f}")
 
@@ -259,7 +294,7 @@ class ContactSheetGenerator(object):
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
             print(f"Warning: Could not extract EXIF data from {imagePath}")
 
-    def imageGenerateSpreadText(self, image, text_string, image_width, position="top"):
+    def imageGenerateSpreadText(self, image, text_string, image_width, position="top", align="left"):
         if not text_string:
             return image
 
@@ -334,20 +369,128 @@ class ContactSheetGenerator(object):
             padding = 6  # Padding between image bottom and text top
             vertOffset = image_bottom + padding - 3  # Move up by 3px
 
-        # Left-aligned positioning with slight offset
-        horOffset = image_left_edge - 7
+        # Positioning based on alignment
+        if align == "right":
+            # Right-aligned positioning - align to right edge of image frame
+            horOffset = image_left_edge + image_width - textImage.size[0] - 22
+        else:
+            # Left-aligned positioning with slight offset
+            horOffset = image_left_edge - 7
 
         image.paste(textImage, (int(horOffset), int(vertOffset)), textImage)
 
         return image
 
+    def export2000pxVersion(self, filePath):
+        """Export a 2000px wide version of the original image"""
+        try:
+            # Open the original file
+            if filePath.lower().endswith((".jpg", ".jpeg")):
+                image = Image.open(filePath)
+            elif filePath.lower().endswith((".tif", ".tiff")):
+                # Try to open TIFF directly first
+                try:
+                    image = Image.open(filePath)
+                except:
+                    # Fall back to dcraw for TIFF if needed
+                    dcraw_opts = ["dcraw", "-c", "-4", "-T", filePath]
+                    result = subprocess.run(dcraw_opts, capture_output=True, timeout=60)
+                    if result.returncode == 0:
+                        rawImage = BytesIO(result.stdout)
+                        image = Image.open(rawImage)
+                    else:
+                        raise Exception("Failed to process TIFF")
+            else:
+                # RAW file - use dcraw
+                dcraw_opts = ["dcraw", "-c", filePath]
+                result = subprocess.run(dcraw_opts, capture_output=True, timeout=60)
+                if result.returncode == 0:
+                    rawImage = BytesIO(result.stdout)
+                    image = Image.open(rawImage)
+                else:
+                    raise Exception("Failed to process RAW file")
+
+            # Calculate new size (max 2000px wide)
+            if image.size[0] > 2000:
+                ratio = 2000.0 / image.size[0]
+                new_height = int(image.size[1] * ratio)
+                image = image.resize((2000, new_height), Image.Resampling.LANCZOS)
+
+            # Apply sharpening after resize
+            # Use less aggressive sharpening than contact sheets since these are larger
+            sharpen_filter = ImageFilter.UnsharpMask(radius=1, percent=100, threshold=3)
+            image = image.filter(sharpen_filter)
+
+            # Create cs subfolder
+            dir_path = os.path.dirname(filePath)
+            cs_dir = os.path.join(dir_path, "cs")
+            if not os.path.exists(cs_dir):
+                os.makedirs(cs_dir)
+
+            # Determine output filename
+            base_name = os.path.basename(filePath)
+            if self.contactSheetConfiguration.get('renameFrames', False) and self.frameCounter > 0:
+                # Use frame number as filename
+                output_name = os.path.join(cs_dir, f"{self.frameCounter:03d}.jpg")
+            else:
+                # Use original filename
+                name_only, ext = os.path.splitext(base_name)
+                output_name = os.path.join(cs_dir, f"{name_only}.jpg")
+
+            # Save with high quality
+            image.save(output_name, 'JPEG', quality=95)
+            print(f"Exported 2000px version: {output_name}")
+
+        except Exception as e:
+            print(f"Error exporting 2000px version of {filePath}: {e}")
+
     def imageWriteExif(self, image, fileName, original_width=None):
-        # Put filename at top
+        # Put date or filename at top
         import os
-        filename = os.path.basename(fileName)
-        if filename:
+        top_text = ""
+
+        if self.contactSheetConfiguration.get('showFilename', False):
+            # Show filename if flag is set
+            top_text = os.path.basename(fileName)
+        else:
+            # Show date by default - try capture date first, then regular date
+            date_str = None
+            if self.ExifTags.get("EXIF_CaptureDate"):
+                date_str = self.ExifTags["EXIF_CaptureDate"]
+            elif self.ExifTags.get("EXIF_Date"):
+                date_str = self.ExifTags["EXIF_Date"]
+
+            if date_str:
+                # Format date nicely (YYYY:MM:DD HH:MM:SS -> May 6th, 2025)
+                try:
+                    # Parse the EXIF date format
+                    dt = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
+
+                    # Get ordinal suffix for day
+                    day = dt.day
+                    if 11 <= day <= 13:
+                        suffix = 'th'
+                    else:
+                        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+
+                    # Format as "May 6th, 2025"
+                    top_text = dt.strftime(f"%B {day}{suffix}, %Y")
+                except:
+                    # Fallback to original date string if parsing fails
+                    top_text = date_str
+            else:
+                # Fallback to filename if no date available
+                top_text = os.path.basename(fileName)
+
+        if top_text:
             width_to_use = original_width if original_width is not None else self.imageWidth
-            image = self.imageGenerateSpreadText(image, filename, width_to_use, position="top")
+            image = self.imageGenerateSpreadText(image, top_text, width_to_use, position="top")
+
+        # Add frame counter in top right if processing folder
+        if self.isProcessingFolder and self.frameCounter > 0:
+            frame_text = f"{self.frameCounter:03d}"
+            width_to_use = original_width if original_width is not None else self.imageWidth
+            image = self.imageGenerateSpreadText(image, frame_text, width_to_use, position="top", align="right")
 
         # Create EXIF info for bottom: Camera, ISO, shutter, aperture
         bottom_line_parts = []
@@ -543,6 +686,9 @@ def main():
     parser.add_argument('--custom-text', action='store_true', help='Enable custom text overlay')
     parser.add_argument('--no-exif', action='store_true', help='Disable EXIF information display')
     parser.add_argument('--no-sharpen', action='store_true', help='Disable image sharpening')
+    parser.add_argument('--show-filename', action='store_true', help='Show filename instead of date at top of image')
+    parser.add_argument('--rename', action='store_true', help='Rename output files to frame numbers')
+    parser.add_argument('--export', action='store_true', help='Export 2000px wide JPEGs of input files')
 
     args = parser.parse_args()
 
@@ -551,7 +697,10 @@ def main():
         'contactSheetWidth': args.width,
         'JPG_Quality': args.quality,
         'histogramInfo': args.histogram,
-        'sharpen': not args.no_sharpen
+        'sharpen': not args.no_sharpen,
+        'showFilename': args.show_filename,
+        'renameFrames': args.rename,
+        'export2000px': args.export
     }
 
     # Handle custom text
